@@ -35,6 +35,7 @@ CREATE TABLE `course_groups` (
   `lecturer_id` INT NOT NULL,
   `room_lat` DECIMAL(10, 8) DEFAULT NULL,
   `room_lng` DECIMAL(11, 8) DEFAULT NULL,
+  `total_sessions` INT DEFAULT 15,
   FOREIGN KEY (`course_id`) REFERENCES `courses`(`id`) ON DELETE CASCADE,
   FOREIGN KEY (`group_id`) REFERENCES `groups`(`id`) ON DELETE CASCADE,
   FOREIGN KEY (`lecturer_id`) REFERENCES `users`(`id`) ON DELETE CASCADE
@@ -66,8 +67,11 @@ CREATE TABLE `attendance_sessions` (
   `course_group_id` INT NOT NULL,
   `code` VARCHAR(6) NOT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `duration_minutes` INT DEFAULT 30,
   `expires_at` DATETIME NOT NULL,
   `status` ENUM('active', 'closed') DEFAULT 'active',
+  `lecturer_lat` DECIMAL(10, 8) DEFAULT NULL,
+  `lecturer_lng` DECIMAL(11, 8) DEFAULT NULL,
   FOREIGN KEY (`course_group_id`) REFERENCES `course_groups`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -105,6 +109,31 @@ CREATE TABLE `sync_logs` (
   `logs` TEXT NOT NULL,
   `timestamp` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`admin_id`) REFERENCES `users`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Attendance Claims
+CREATE TABLE `attendance_claims` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `student_id` INT NOT NULL,
+  `session_id` INT NOT NULL,
+  `reason` TEXT NOT NULL,
+  `status` ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`student_id`) REFERENCES `users`(`id`) ON DELETE CASCADE,
+  FOREIGN KEY (`session_id`) REFERENCES `attendance_sessions`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Communications
+CREATE TABLE `communications` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `sender_id` INT NOT NULL,
+  `receiver_id` INT NOT NULL,
+  `course_group_id` INT DEFAULT NULL,
+  `message` TEXT NOT NULL,
+  `timestamp` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`sender_id`) REFERENCES `users`(`id`) ON DELETE CASCADE,
+  FOREIGN KEY (`receiver_id`) REFERENCES `users`(`id`) ON DELETE CASCADE,
+  FOREIGN KEY (`course_group_id`) REFERENCES `course_groups`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- INSERT DEFAULT DATA --

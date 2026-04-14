@@ -1,6 +1,6 @@
 <?php
 // logout.php
-session_start();
+require_once 'config/db.php';
 $_SESSION = array();
 
 if (ini_get("session.use_cookies")) {

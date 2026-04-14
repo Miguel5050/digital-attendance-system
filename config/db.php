@@ -24,6 +24,9 @@ try {
 
 // Ensure session starts securely
 if (session_status() === PHP_SESSION_NONE) {
+    session_set_cookie_params([
+        'path' => '/',
+        'samesite' => 'Lax'
+    ]);
     session_start();
 }
-?>
