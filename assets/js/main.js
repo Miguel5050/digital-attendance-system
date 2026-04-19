@@ -55,13 +55,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (data.success) {
                             showAlert('alert-container', data.message, 'success');
                             attendanceForm.reset();
-                            document.getElementById('claim-container').classList.add('d-none');
-                            setTimeout(() => window.location.reload(), 2000);
+                            setTimeout(() => { window.location.reload(); }, 1500);
                         } else {
                             showAlert('alert-container', data.error);
                             if (data.needs_claim) {
-                                document.getElementById('claim-container').classList.remove('d-none');
-                                document.getElementById('claim_session_id').value = data.session_id;
+                                showAlert('alert-container', 'Verification Failed. If you believe this is an error, use the "Message Lecturer" tab to explain your situation natively.', 'danger');
                             }
                         }
                     })
@@ -255,56 +253,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
-        // Handle Claims
-        const loadClaims = () => {
-            const container = document.getElementById('claims-list-container');
-            if(!container) return;
-            fetch('api/get_claims.php', {credentials:'include'})
-            .then(r => {
-                if(!r.ok) throw new Error('Failed to load claims check PHP errors');
-                return r.json();
-            })
-            .then(d=>{
-                if(d.success) {
-                    if(d.data.length === 0) {
-                        container.innerHTML = '<div class="alert alert-light">No pending claims.</div>';
-                        return;
-                    }
-                    container.innerHTML = d.data.map(c => `
-                        <div class="card mb-2 shadow-sm border-0 bg-light">
-                            <div class="card-body py-2">
-                                <div class="d-flex justify-content-between">
-                                    <strong>${c.student_name} (${c.student_id ? c.student_id : 'N/A'})</strong>
-                                    <small class="text-muted">${c.course_code}</small>
-                                </div>
-                                <p class="small mb-2 mt-1">"${c.reason}"</p>
-                                <div>
-                                    <button class="btn btn-sm btn-success claim-action-btn" data-id="${c.claim_id}" data-action="approve">Approve</button>
-                                    <button class="btn btn-sm btn-danger claim-action-btn" data-id="${c.claim_id}" data-action="reject">Reject</button>
-                                </div>
-                            </div>
-                        </div>
-                    `).join('');
-
-                    document.querySelectorAll('.claim-action-btn').forEach(btn => {
-                        btn.addEventListener('click', (e) => {
-                            fetch('api/handle_claim.php', {
-                                method: 'POST', credentials: 'include',
-                                headers: {'Content-Type':'application/json'},
-                                body: JSON.stringify({ claim_id: e.target.getAttribute('data-id'), action: e.target.getAttribute('data-action') })
-                            }).then(r=>r.json()).then(resp=>{
-                                if(resp.success) { loadClaims(); } else { alert(resp.error); }
-                            });
-                        });
-                    });
-                }
-            }).catch(err => {
-                console.error('Claims load error:', err);
-                container.innerHTML = '<div class="alert alert-danger">Error loading claims.</div>';
-            });
-        };
-        loadClaims();
-        setInterval(loadClaims, 15000);
+        // Handle Claims        // Removed loadClaims completely as it has been replaced by the Timeline + Direct Messaging upgrade
     }
 
 
@@ -313,36 +262,31 @@ document.addEventListener('DOMContentLoaded', () => {
     // ==========================================
     
     const contactsContainer = document.getElementById('chat-contacts-container');
+    const selectContainer = document.getElementById('student-chat-lecturer-select');
     const messagesContainer = document.getElementById('chat-messages-container');
     const chatForm = document.getElementById('chat-form');
-    let currentChatUserId = null;
+    
+    // Initialize chat UI logic if any container exists
+    if (contactsContainer || selectContainer) {
+        let currentChatUserId = null;
 
-    if (contactsContainer) {
-        
-        // Load Contacts
-        fetch('api/get_contacts.php', {credentials:'include'}).then(r=>r.json()).then(d => {
-            if(d.success) {
-                contactsContainer.innerHTML = d.data.length ? d.data.map(c => `
-                    <div class="p-2 border-bottom cursor-pointer chat-contact-card" style="cursor:pointer;" data-id="${c.id}" data-name="${c.name}">
-                        <strong>${c.name}</strong><br>
-                        <small class="text-muted">${c.student_id ? 'Student ' + c.student_id : 'Lecturer (' + c.course_code + ')'}</small>
-                    </div>
-                `).join('') : '<div class="p-2 text-muted">No contacts</div>';
-
-                document.querySelectorAll('.chat-contact-card').forEach(card => {
-                    card.addEventListener('click', (e) => {
-                        const target = e.currentTarget;
-                        document.querySelectorAll('.chat-contact-card').forEach(c=>c.classList.remove('bg-light'));
-                        target.classList.add('bg-light');
-                        
-                        currentChatUserId = target.getAttribute('data-id');
-                        document.getElementById('chat-receiver-id').value = currentChatUserId;
-                        chatForm.classList.remove('d-none');
-                        loadMessages();
-                    });
-                });
-            }
-        });
+        const refreshBadge = () => {
+             fetch('api/get_unread.php', {credentials:'include'})
+             .then(r=>r.json())
+             .then(d=>{
+                 const badge = document.getElementById('msg-badge');
+                 if(badge && d.success) {
+                     if(d.count > 0) {
+                         badge.innerText = d.count;
+                         badge.classList.remove('d-none');
+                     } else {
+                         badge.classList.add('d-none');
+                     }
+                 }
+             });
+        };
+        setInterval(refreshBadge, 5000); 
+        refreshBadge();
 
         // Load Messages
         const loadMessages = () => {
@@ -360,6 +304,82 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             });
         };
+        
+        // Load Contacts
+        const loadContacts = () => {
+            fetch('api/get_contacts.php', {credentials:'include'}).then(r=>r.json()).then(d => {
+                if(d.success) {
+                    if (contactsContainer) {
+                        // LECTURER UI rendering Sidebar Cards
+                        contactsContainer.innerHTML = d.data.length ? d.data.map(c => `
+                            <div class="p-3 border-bottom chat-contact-card ${currentChatUserId == c.id ? 'bg-light' : ''}" style="cursor:pointer;" data-id="${c.id}" data-name="${c.name}">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <strong>${c.name}</strong><br>
+                                        <small class="text-muted">${c.student_id ? 'Student ' + c.student_id : 'Lecturer (' + c.course_code + ')'}</small>
+                                    </div>
+                                    ${c.unread_count > 0 ? `<span class="badge bg-danger rounded-pill">${c.unread_count}</span>` : ''}
+                                </div>
+                            </div>
+                        `).join('') : '<div class="p-2 text-muted mt-2">No students have directly messaged you yet.</div>';
+
+                        document.querySelectorAll('.chat-contact-card').forEach(card => {
+                            card.addEventListener('click', (e) => {
+                                const target = e.currentTarget;
+                                document.querySelectorAll('.chat-contact-card').forEach(c=>c.classList.remove('bg-light'));
+                                target.classList.add('bg-light');
+                                
+                                currentChatUserId = target.getAttribute('data-id');
+                                document.getElementById('chat-receiver-id').value = currentChatUserId;
+                                chatForm.classList.remove('d-none');
+                                
+                                refreshBadge();
+                                loadMessages();
+                                loadContacts();
+                            });
+                        });
+                    } 
+                    else if (selectContainer) {
+                        // STUDENT UI rendering Dropdown
+                        const existingOpts = selectContainer.innerHTML;
+                        let newOpts = '<option value="">Select a lecturer to converse with...</option>';
+                        newOpts += d.data.map(c => {
+                            let badgeTxt = c.unread_count > 0 ? ` [${c.unread_count} Unread]` : '';
+                            return `<option value="${c.id}" ${currentChatUserId == c.id ? 'selected' : ''}>${c.name} (${c.course_code})${badgeTxt}</option>`;
+                        }).join('');
+                        
+                        // Prevent UI flicker by checking if innerHTML changed
+                        if (existingOpts !== newOpts && !selectContainer.dataset.user_focus) {
+                            selectContainer.innerHTML = newOpts;
+                        }
+
+                        // Attach Event Listener Once
+                        if (!selectContainer.dataset.listenerAttached) {
+                            selectContainer.dataset.listenerAttached = 'true';
+                            selectContainer.addEventListener('change', (e) => {
+                                currentChatUserId = e.target.value;
+                                if (!currentChatUserId) {
+                                    chatForm.classList.add('d-none');
+                                    messagesContainer.innerHTML = '<div class="text-center text-muted mt-5">Please pick a lecturer from the dropdown above.</div>';
+                                    return;
+                                }
+                                document.getElementById('chat-receiver-id').value = currentChatUserId;
+                                chatForm.classList.remove('d-none');
+                                
+                                refreshBadge();
+                                loadMessages();
+                                loadContacts();
+                            });
+                            
+                            // To prevent flicker during selection interaction
+                            selectContainer.addEventListener('focus', () => selectContainer.dataset.user_focus = 'true');
+                            selectContainer.addEventListener('blur', () => selectContainer.dataset.user_focus = '');
+                        }
+                    }
+                }
+            });
+        };
+        loadContacts();
 
         // Send Message
         if(chatForm) {
@@ -379,7 +399,10 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
-        setInterval(loadMessages, 5000); // Live poll messages
+        setInterval(() => {
+            loadMessages();
+            loadContacts();
+        }, 5000); // Live poll messages & contacts
     }
 
 

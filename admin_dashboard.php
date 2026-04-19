@@ -43,6 +43,7 @@ $reports = $pdo->query("SELECT id, filename, timestamp, logs FROM sync_logs WHER
             .no-print { display: none !important; }
         }
     </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark navbar-custom mb-4 no-print">
@@ -89,7 +90,7 @@ $reports = $pdo->query("SELECT id, filename, timestamp, logs FROM sync_logs WHER
                 <button class="nav-link active" data-bs-toggle="pill" data-bs-target="#overview" type="button" role="tab">Data & Logs</button>
             </li>
             <li class="nav-item" role="presentation">
-                <button class="nav-link" data-bs-toggle="pill" data-bs-target="#reports-tab" type="button" role="tab">Exam Eligibility Reports <span class="badge bg-danger"><?php echo count($reports); ?></span></button>
+                <button class="nav-link" data-bs-toggle="pill" data-bs-target="#reports-tab" type="button" role="tab">Exam Eligibility Reports <span class="badge bg-danger" id="report-badge"><?php echo count($reports); ?></span></button>
             </li>
         </ul>
 
@@ -153,7 +154,7 @@ $reports = $pdo->query("SELECT id, filename, timestamp, logs FROM sync_logs WHER
                     <div class="col-md-4">
                         <div class="card dashboard-card p-3 h-100">
                             <h5 class="mb-3">Submitted Reports</h5>
-                            <ul class="list-group list-group-flush report-list">
+                            <ul class="list-group list-group-flush report-list" id="report-list">
                                 <?php if(empty($reports)): ?>
                                     <li class="list-group-item text-muted">No finished course reports available.</li>
                                 <?php endif; ?>
@@ -163,11 +164,6 @@ $reports = $pdo->query("SELECT id, filename, timestamp, logs FROM sync_logs WHER
                                     </li>
                                 <?php endforeach; ?>
                             </ul>
-                            <div id="hidden-report-data" class="d-none">
-                                <?php foreach($reports as $r): ?>
-                                    <textarea id="report-json-<?php echo $r['id']; ?>"><?php echo htmlspecialchars($r['logs']); ?></textarea>
-                                <?php endforeach; ?>
-                            </div>
                         </div>
                     </div>
                     <div class="col-md-8">
@@ -187,26 +183,54 @@ $reports = $pdo->query("SELECT id, filename, timestamp, logs FROM sync_logs WHER
     <!-- Bootstrap bundle JS for tabs -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        window.reportDataStore = {};
+        <?php foreach($reports as $r): ?>
+            window.reportDataStore[<?php echo $r['id']; ?>] = <?php echo json_encode($r['logs']); ?>;
+        <?php endforeach; ?>
+
         function loadReport(id) {
-            const raw = document.getElementById('report-json-' + id).value;
+            const raw = window.reportDataStore[id];
             let data;
             try { data = JSON.parse(raw); } catch(e) { alert("Invalid report JSON"); return; }
             
+            if (!data.session_meta) {
+                alert("This report was generated using the old legacy format before the Matrix update. Please generate a new Final Report to view the detailed mapping.");
+                return;
+            }
+
             let tbody = '';
             let eligibleCount = 0;
             let ineligibleCount = 0;
 
+            // Build Session Headers
+            let sessionHeaders = '';
+            let metaArr = Object.values(data.session_meta);
+            metaArr.forEach((m, idx) => {
+                sessionHeaders += `<th title="${m.name} (${m.duration}m)">S${idx+1}</th>`;
+            });
+
             data.students.forEach(s => {
                 const isEligible = s.percentage >= 70;
                 if(isEligible) eligibleCount++; else ineligibleCount++;
+                
+                let sessionTds = '';
+                Object.keys(data.session_meta).forEach(s_id => {
+                    let present = s.sessions_detailed[s_id] ? true : false;
+                    if(present) {
+                        sessionTds += `<td class="text-center text-success fw-bold">P</td>`;
+                    } else {
+                        sessionTds += `<td class="text-center text-danger fw-bold">A</td>`;
+                    }
+                });
 
                 tbody += `
                     <tr class="${!isEligible ? 'table-danger' : ''}">
                         <td>${s.student_id ? s.student_id : 'N/A'}</td>
                         <td>${s.name}</td>
-                        <td>${s.attended}</td>
-                        <td><strong>${s.percentage}%</strong></td>
-                        <td>${isEligible ? '<span class="badge bg-success">Eligible</span>' : '<span class="badge bg-danger">NOT Eligible (< 70%)</span>'}</td>
+                        ${sessionTds}
+                        <td class="text-center">${s.attended} / ${data.total_taught}</td>
+                        <td class="text-center"><strong>${s.percentage}%</strong></td>
+                        <td>${isEligible ? '<span class="badge bg-success">Eligible</span>' : '<span class="badge bg-danger">NOT Eligible</span>'}</td>
                     </tr>
                 `;
             });
@@ -214,7 +238,10 @@ $reports = $pdo->query("SELECT id, filename, timestamp, logs FROM sync_logs WHER
             const html = `
                 <div class="d-flex justify-content-between align-items-center mb-3">
                     <h4 class="mb-0">${data.course_name} (${data.group_code})</h4>
-                    <button class="btn btn-primary" onclick="printReport()">Download / Print PDF</button>
+                    <div>
+                        <button class="btn btn-success" onclick="exportExcel(${id})">Download Excel Format</button>
+                        <button class="btn btn-primary ms-2" onclick="printReport()">Download / Print PDF</button>
+                    </div>
                 </div>
                 <hr>
                 <div class="row mb-4">
@@ -223,13 +250,14 @@ $reports = $pdo->query("SELECT id, filename, timestamp, logs FROM sync_logs WHER
                     <div class="col-4 text-danger"><strong>Ineligible Students:</strong> ${ineligibleCount}</div>
                 </div>
                 <div class="table-responsive">
-                    <table class="table table-bordered table-striped">
+                    <table class="table table-bordered table-striped" style="font-size:0.9rem;">
                         <thead class="table-light">
                             <tr>
                                 <th>Student ID</th>
                                 <th>Name</th>
-                                <th>Sessions Attended</th>
-                                <th>Percentage</th>
+                                ${sessionHeaders}
+                                <th>Total</th>
+                                <th>Score</th>
                                 <th>Status</th>
                             </tr>
                         </thead>
@@ -269,6 +297,77 @@ $reports = $pdo->query("SELECT id, filename, timestamp, logs FROM sync_logs WHER
             window.print();
             document.getElementById('print-area').classList.add('d-none');
         }
+
+        function exportExcel(id) {
+            const raw = window.reportDataStore[id];
+            let data = JSON.parse(raw);
+            
+            let exportData = [];
+           
+            data.students.forEach(s => {
+                let row = {
+                    "Student ID": s.student_id ? s.student_id : 'N/A',
+                    "Name": s.name
+                };
+                
+                if (data.session_meta) {
+                    Object.values(data.session_meta).forEach((m, idx) => {
+                        let s_id = Object.keys(data.session_meta)[idx];
+                        let present = s.sessions_detailed[s_id];
+                        row[`S${idx+1} (${m.duration}m)`] = present ? 'P' : 'A';
+                    });
+                }
+                
+                row["Total Attended"] = s.attended;
+                row["Percentage"] = s.percentage + '%';
+                row["Status"] = (s.percentage >= 70) ? 'Eligible' : 'Not Eligible';
+                
+                exportData.push(row);
+            });
+            
+            const ws = XLSX.utils.json_to_sheet(exportData);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Attendance_Report");
+            
+            let filename = (data.course_name + '_Report').replace(/\\s+/g, '_') + '.xlsx';
+            XLSX.writeFile(wb, filename);
+        }
+
+        // Real-time polling for new reports
+        let currentReportCount = <?php echo count($reports); ?>;
+        
+        function pollReports() {
+            fetch('api/get_reports.php?_=' + new Date().getTime())
+                .then(r => r.json())
+                .then(data => {
+                    if(data.success && data.reports.length > currentReportCount) {
+                        currentReportCount = data.reports.length;
+                        document.getElementById('report-badge').innerText = currentReportCount;
+                        
+                        let listHtml = '';
+                        
+                        data.reports.forEach(r => {
+                            let dateObj = new Date(r.timestamp.replace(' ', 'T'));
+                            let formattedDate = dateObj.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+                            
+                            let niceName = r.filename.replace('Final_Report_', '');
+                            
+                            listHtml += `<li class="list-group-item cursor-pointer text-primary" onclick='loadReport(${r.id})'>
+                                ${formattedDate} - ${niceName}
+                            </li>`;
+                            
+                            // update data store
+                            window.reportDataStore[r.id] = r.logs;
+                        });
+                        
+                        document.getElementById('report-list').innerHTML = listHtml;
+                    }
+                })
+                .catch(e => console.error("Report poll error:", e));
+        }
+
+        setInterval(pollReports, 5000);
+
     </script>
     <script src="assets/js/main.js?v=4"></script>
 </body>

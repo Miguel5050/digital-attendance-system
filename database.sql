@@ -130,6 +130,7 @@ CREATE TABLE `communications` (
   `receiver_id` INT NOT NULL,
   `course_group_id` INT DEFAULT NULL,
   `message` TEXT NOT NULL,
+  `is_read` TINYINT(1) DEFAULT 0,
   `timestamp` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`sender_id`) REFERENCES `users`(`id`) ON DELETE CASCADE,
   FOREIGN KEY (`receiver_id`) REFERENCES `users`(`id`) ON DELETE CASCADE,

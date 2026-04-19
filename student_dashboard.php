@@ -26,15 +26,10 @@ $courses = $stmt->fetchAll();
 // Get Attendance Summary (calculated across merged imports)
 $attendance_stats = [];
 foreach ($courses as $course) {
-    // Total sessions for this root course+group
-    $s_stmt = $pdo->prepare("
-        SELECT COUNT(*) as total 
-        FROM attendance_sessions sess
-        JOIN course_groups cg ON sess.course_group_id = cg.id
-        WHERE cg.course_id = ? AND cg.group_id = ? AND sess.status='closed'
-    ");
+    // Total expected sessions for this course
+    $s_stmt = $pdo->prepare("SELECT total_sessions FROM course_groups WHERE course_id = ? AND group_id = ?");
     $s_stmt->execute([$course['course_id'], $course['group_id']]);
-    $total_sessions = $s_stmt->fetch()['total'];
+    $total_expected = $s_stmt->fetch()['total_sessions'] ?? 15;
     
     // Total attended
     $a_stmt = $pdo->prepare("
@@ -47,7 +42,7 @@ foreach ($courses as $course) {
     $a_stmt->execute([$course['course_id'], $course['group_id'], $student_id]);
     $attended = $a_stmt->fetch()['total'];
     
-    $percentage = $total_sessions > 0 ? round(($attended / $total_sessions) * 100) : 100;
+    $percentage = $total_expected > 0 ? round(($attended / $total_expected) * 100) : 100;
     
     $status_label = "NOT ELIGIBLE FOR EXAMS";
     $status_class = "percentage-NOT-ELIGIBLE";
@@ -62,7 +57,7 @@ foreach ($courses as $course) {
         'label' => $status_label,
         'class' => $status_class,
         'attended' => $attended,
-        'total' => $total_sessions
+        'total_expected' => $total_expected
     ];
 }
 ?>
@@ -103,7 +98,7 @@ foreach ($courses as $course) {
                 <button class="nav-link" data-bs-toggle="pill" data-bs-target="#overview-tab" type="button" role="tab">My Overview</button>
             </li>
             <li class="nav-item" role="presentation">
-                <button class="nav-link" data-bs-toggle="pill" data-bs-target="#chat-tab" type="button" role="tab">Message Lecturer</button>
+                <button class="nav-link" data-bs-toggle="pill" data-bs-target="#chat-tab" type="button" role="tab">Message Lecturer <span class="badge bg-danger d-none" id="msg-badge">0</span></button>
             </li>
         </ul>
 
@@ -134,21 +129,7 @@ foreach ($courses as $course) {
                                 <button type="submit" class="btn btn-primary w-100 py-2" id="mark-btn">Verify Course, GPS & Mark Present</button>
                             </form>
                             
-                            <!-- Claim Form (Hidden initally) -->
-                            <div id="claim-container" class="mt-4 d-none border-top pt-3">
-                                <div class="alert alert-warning">
-                                    <h5 class="alert-heading">GPS Verification Failed</h5>
-                                    <p class="mb-0">You appear to be too far from the class. If you believe this is an error, submit a claim reasoning below to your lecturer.</p>
-                                </div>
-                                <form id="claim-form">
-                                    <input type="hidden" id="claim_session_id">
-                                    <div class="mb-3">
-                                        <label class="form-label">Reason</label>
-                                        <textarea class="form-control" id="claim_reason" rows="3" required placeholder="My location is inaccurate, I am sitting in the back row..."></textarea>
-                                    </div>
-                                    <button type="submit" class="btn btn-warning w-100">Submit Attendance Claim</button>
-                                </form>
-                            </div>
+                                <!-- Claim container removed natively as it's merged into the generic Messaging UI flow -->
                         </div>
                     </div>
                 </div>
@@ -175,7 +156,7 @@ foreach ($courses as $course) {
                                     <tr>
                                         <td>
                                             <strong><?php echo htmlspecialchars($stat['course']); ?></strong><br>
-                                            <small class="text-muted"><?php echo $stat['attended']; ?>/<?php echo $stat['total']; ?> sessions</small>
+                                            <small class="text-muted"><?php echo $stat['attended']; ?> / <?php echo $stat['total_expected']; ?> Sessions</small>
                                         </td>
                                         <td>
                                             <div class="progress" style="height: 10px;">
@@ -196,26 +177,25 @@ foreach ($courses as $course) {
 
             <!-- CHAT TAB -->
             <div class="tab-pane fade" id="chat-tab" role="tabpanel">
-                <div class="card dashboard-card p-3">
-                    <h5 class="mb-3">Messages</h5>
-                    <div class="row">
-                        <div class="col-md-4 border-end" id="chat-contacts-container">
-                            Loading contacts...
+                <div class="card dashboard-card p-4 mx-auto" style="max-width: 800px;">
+                    <h5 class="mb-3">Message Lecturer</h5>
+                    <div class="mb-3">
+                        <select class="form-select form-select-lg shadow-sm" id="student-chat-lecturer-select">
+                            <option value="">Select a lecturer to converse with...</option>
+                        </select>
+                    </div>
+                    
+                    <div class="chat-container mt-2">
+                        <div class="chat-messages" id="chat-messages-container" style="min-height: 400px;">
+                            <div class="text-center text-muted mt-5">Please pick a lecturer from the dropdown above.</div>
                         </div>
-                        <div class="col-md-8">
-                            <div class="chat-container">
-                                <div class="chat-messages" id="chat-messages-container">
-                                    <div class="text-muted text-center mt-5">Select a lecturer to chat</div>
-                                </div>
-                                <form id="chat-form" class="mt-2 d-none">
-                                    <input type="hidden" id="chat-receiver-id">
-                                    <div class="input-group">
-                                        <input type="text" class="form-control" id="chat-input" placeholder="Type a message..." required>
-                                        <button class="btn btn-primary" type="submit">Send</button>
-                                    </div>
-                                </form>
+                        <form id="chat-form" class="mt-3 d-none">
+                            <input type="hidden" id="chat-receiver-id">
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="chat-input" placeholder="Explain your issue clearly..." required>
+                                <button class="btn btn-primary px-5" type="submit">Send</button>
                             </div>
-                        </div>
+                        </form>
                     </div>
                 </div>
             </div>
@@ -227,6 +207,6 @@ foreach ($courses as $course) {
     <script>
         const USER_ID = <?php echo $_SESSION['user_id']; ?>;
     </script>
-    <script src="assets/js/main.js?v=6"></script>
+    <script src="assets/js/main.js?v=7"></script>
 </body>
 </html>

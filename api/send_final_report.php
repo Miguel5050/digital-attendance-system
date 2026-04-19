@@ -37,10 +37,11 @@ $enrolledStmt = $pdo->prepare("
 $enrolledStmt->execute([$cgid]);
 $students = $enrolledStmt->fetchAll();
 
-$taught_sessions = $pdo->prepare("SELECT id FROM attendance_sessions WHERE course_group_id = ? AND status='closed'")->execute([$cgid]);
-$taughtCount = $pdo->prepare("SELECT COUNT(*) FROM attendance_sessions WHERE course_group_id = ? AND status='closed'");
-$taughtCount->execute([$cgid]);
-$totalTaught = $taughtCount->fetchColumn();
+$sessionsStmt = $pdo->prepare("SELECT id, created_at, duration_minutes FROM attendance_sessions WHERE course_group_id = ? AND status='closed' ORDER BY created_at ASC");
+$sessionsStmt->execute([$cgid]);
+$sessions = $sessionsStmt->fetchAll();
+
+$totalTaught = count($sessions);
 
 // If no sessions, cannot send report
 if ($totalTaught == 0) {
@@ -50,6 +51,7 @@ if ($totalTaught == 0) {
 
 $reportData = [];
 
+// For detailed breakdown list per student
 foreach ($students as $stu) {
     $attCount = $pdo->prepare("
         SELECT COUNT(DISTINCT ar.session_id) 
@@ -61,12 +63,32 @@ foreach ($students as $stu) {
     $attended = $attCount->fetchColumn();
 
     $percentage = round(($attended / $totalTaught) * 100);
+    
+    // Per-session boolean map
+    $sessionMap = [];
+    foreach($sessions as $sess) {
+        $checkPresent = $pdo->prepare("SELECT id FROM attendance_records WHERE session_id = ? AND student_id = ? AND status = 'present'");
+        $checkPresent->execute([$sess['id'], $stu['id']]);
+        $sessionMap[$sess['id']] = $checkPresent->fetch() ? true : false;
+    }
+
     $reportData[] = [
         'student_id' => $stu['student_id'],
         'name' => $stu['name'],
         'attended' => $attended,
-        'percentage' => $percentage
+        'percentage' => $percentage,
+        'sessions_detailed' => $sessionMap
     ];
+}
+
+$sessionDetails = [];
+$sessionNumber = 1;
+foreach($sessions as $sess) {
+    $sessionDetails[$sess['id']] = [
+        'name' => 'Session ' . $sessionNumber . ' (' . date('D, jS M Y', strtotime($sess['created_at'])) . ')',
+        'duration' => $sess['duration_minutes']
+    ];
+    $sessionNumber++;
 }
 
 $fullPayload = json_encode([
@@ -74,16 +96,16 @@ $fullPayload = json_encode([
     'group_code' => $course['group_code'],
     'total_taught' => $totalTaught,
     'total_expected' => $course['total_sessions'],
-    'students' => $reportData
+    'students' => $reportData,
+    'session_meta' => $sessionDetails
 ]);
 
-// Since Admin role is ID 1 (default from DB), we insert into sync_logs or a new dedicated table.
-// `sync_logs` was designed for CSV sync data, but we can repurpose it safely for this.
-// "logs" will store the json string.
-$admin_id = 1;
+// Since Admin role is ID 1 (default from DB), we insert into sync_logs 
+// We MUST make sure admin_id is valid. Let's find an active admin to assign it to loosely, or 1.
+$adminCheck = $pdo->query("SELECT id FROM users WHERE role='admin' LIMIT 1")->fetchColumn() ?? 1;
 
 $ins = $pdo->prepare("INSERT INTO sync_logs (admin_id, filename, status, logs) VALUES (?, ?, 'success', ?)");
-if ($ins->execute([$admin_id, 'Final_Report_' . $course['code'] . '_' . date('Ymd_Hi'), $fullPayload])) {
+if ($ins->execute([$adminCheck, 'Final_Report_' . $course['code'] . '_' . date('Ymd_Hi'), $fullPayload])) {
     echo json_encode(['success' => true, 'message' => 'Attendance statistics correctly sent to Administrator!']);
 } else {
     echo json_encode(['success' => false, 'error' => 'Database error while saving report.']);

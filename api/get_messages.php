@@ -29,5 +29,9 @@ $stmt = $pdo->prepare("
 $stmt->execute([$user_id, $with_user_id, $with_user_id, $user_id]);
 $messages = $stmt->fetchAll();
 
+// Mark them as read if the current user is the receiver
+$upd = $pdo->prepare("UPDATE communications SET is_read = 1 WHERE receiver_id = ? AND sender_id = ?");
+$upd->execute([$user_id, $with_user_id]);
+
 echo json_encode(['success' => true, 'data' => $messages]);
 ?>
